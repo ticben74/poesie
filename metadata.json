@@ -1,0 +1,8 @@
+{
+  "name": "مدن الشعر",
+  "description": "منصة منسق معارض تفاعلية لتوثيق تراث الزيتون في تونس باستخدام السرد الصوتي والبصري سحابياً.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}
