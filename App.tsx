@@ -2,24 +2,61 @@
 import React, { useState, useEffect } from 'react';
 import { ExhibitionsDashboard } from './components/ExhibitionsDashboard';
 import { ExhibitionLanding } from './components/ExhibitionLanding';
+import { FarewellScreen } from './components/FarewellScreen';
 import { db, Exhibition } from './services/supabase';
-import { Book, ArrowRight, Quill as PenQuill, LayoutGrid, Sparkles, Edit3, Settings, Languages } from 'lucide-react';
+import { LayoutGrid, Edit3, Settings, Languages } from 'lucide-react';
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'portal' | 'exhibition' | 'admin' | 'editor'>('portal');
+  const [view, setView] = useState<'portal' | 'exhibition' | 'admin' | 'editor' | 'farewell'>('portal');
   const [selectedExId, setSelectedExId] = useState<string | null>(null);
+  const [lastVisitedName, setLastVisitedName] = useState('');
   const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    handleDirectLink();
     loadPortalData();
   }, []);
+
+  const handleDirectLink = () => {
+    const params = new URLSearchParams(window.location.search);
+    const exSlug = params.get('ex') || params.get('id');
+    if (exSlug) {
+      setSelectedExId(exSlug);
+      setView('exhibition');
+    }
+  };
 
   async function loadPortalData() {
     setLoading(true);
     const data = await db.getExhibitions();
     setExhibitions(data as Exhibition[]);
     setLoading(false);
+  }
+
+  const handleExhibitionExit = (name: string, role: string) => {
+    if (role === 'visitor') {
+      setLastVisitedName(name);
+      setView('farewell');
+    } else {
+      setView(role === 'coordinator' ? 'admin' : 'editor');
+    }
+    
+    // تنظيف الرابط عند العودة لشاشة الوداع
+    if (window.location.search) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  };
+
+  if (view === 'farewell') {
+    const shareUrl = selectedExId ? `${window.location.origin}${window.location.pathname}?ex=${selectedExId}` : window.location.origin;
+    return (
+      <FarewellScreen 
+        exhibitionName={lastVisitedName} 
+        shareUrl={shareUrl}
+        onRestart={() => setView('exhibition')}
+      />
+    );
   }
 
   if (view === 'admin' || view === 'editor') {
@@ -44,7 +81,7 @@ const App: React.FC = () => {
       <div className="animate-in zoom-in duration-700">
         <ExhibitionLanding 
           exhibitionId={selectedExId} 
-          onClose={() => { setView('portal'); setSelectedExId(null); }} 
+          onClose={(name, role) => handleExhibitionExit(name, role)} 
         />
       </div>
     );
@@ -52,7 +89,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-stone-950 text-stone-100 font-amiri overflow-x-hidden selection:bg-blue-500/30">
-      {/* Hero Section: Poetry Portal */}
       <section className="relative h-screen flex flex-col items-center justify-center px-6 overflow-hidden">
         <div className="absolute inset-0 opacity-20 pointer-events-none">
           <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/10 blur-[120px] rounded-full animate-pulse"></div>
@@ -106,19 +142,13 @@ const App: React.FC = () => {
             </button>
           </div>
         </div>
-
-        <div className="absolute bottom-16 flex flex-col items-center gap-6 text-stone-700">
-           <span className="text-[12px] uppercase tracking-[0.5em]">انزل للأعماق</span>
-           <div className="w-px h-24 bg-gradient-to-b from-blue-600 to-transparent"></div>
-        </div>
       </section>
 
-      {/* City Gallery */}
       <section id="cities" className="py-48 px-8 max-w-7xl mx-auto">
         <div className="flex flex-col md:flex-row justify-between items-end mb-32 gap-10">
           <div className="space-y-6">
              <h2 className="text-7xl font-bold text-white tracking-tighter">عواصم القصيد</h2>
-             <p className="text-stone-500 text-3xl max-w-2xl font-amiri leading-relaxed">اختر مدينة لتدخل ديوانها الافتراضي، حيث كل ركن يحكي ملحمة، وكل زاوية تردد صدى شاعر.</p>
+             <p className="text-stone-500 text-3xl max-w-2xl font-amiri leading-relaxed">اختر مدينة لتدخل ديوانها الافتراضي.</p>
           </div>
           <div className="text-blue-500 font-black text-2xl border-b-8 border-blue-500/10 pb-6 px-4">
             {exhibitions.length} مدينة شعرية
@@ -145,21 +175,9 @@ const App: React.FC = () => {
                   alt={ex.context.name}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-stone-950 via-stone-950/30 to-transparent"></div>
-                
                 <div className="absolute bottom-0 p-16 w-full space-y-8">
-                   <h3 className="text-6xl font-bold text-white group-hover:text-blue-400 transition-colors leading-none tracking-tighter">{ex.context.name}</h3>
-                   <p className="text-stone-400 line-clamp-2 text-2xl italic font-amiri opacity-0 group-hover:opacity-100 transition-all transform translate-y-12 group-hover:translate-y-0 duration-700 delay-100">
-                    {ex.context.description}
-                   </p>
-                   <div className="pt-10 flex justify-between items-center">
-                      <div className="flex flex-col">
-                        <span className="text-white text-2xl font-bold tracking-tighter">{ex.items.length} قصيدة</span>
-                        <span className="text-stone-600 text-[12px] font-bold uppercase tracking-widest">إرساء مكاني نشط</span>
-                      </div>
-                      <div className="w-20 h-20 bg-white text-stone-950 rounded-[2rem] flex items-center justify-center -translate-x-16 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all duration-700 shadow-[0_30px_60px_rgba(255,255,255,0.2)]">
-                        <ArrowRight size={36} />
-                      </div>
-                   </div>
+                   <h3 className="text-6xl font-bold text-white group-hover:text-blue-400 transition-colors tracking-tighter">{ex.context.name}</h3>
+                   <p className="text-stone-400 line-clamp-2 text-2xl italic font-amiri opacity-0 group-hover:opacity-100 transition-all duration-700">{ex.context.description}</p>
                 </div>
               </div>
             ))}
@@ -168,9 +186,6 @@ const App: React.FC = () => {
       </section>
 
       <footer className="py-48 border-t border-stone-900 bg-black/40 text-center space-y-12">
-         <p className="text-stone-500 text-2xl font-amiri max-w-2xl mx-auto leading-relaxed px-6">
-           "مدن الشعر" هي مبادرة رقمية لإعادة تعريف القراءة وتجسيد التراث الأدبي العربي في العصر الرقمي.
-         </p>
          <div className="text-stone-700 text-sm font-black uppercase tracking-[0.6em]">Digital Poetry Cities © 2024</div>
       </footer>
     </div>

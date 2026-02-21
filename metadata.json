@@ -1,5 +1,5 @@
 {
-  "name": "مدن الشعر",
+  "name": "cities2",
   "description": "منصة منسق معارض تفاعلية لتوثيق تراث الزيتون في تونس باستخدام السرد الصوتي والبصري سحابياً.",
   "requestFramePermissions": [
     "microphone",

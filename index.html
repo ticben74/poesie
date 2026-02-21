@@ -3,15 +3,21 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>معرض الزيتونة: ما لا يرى في الزيت</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>مدن الشعر: منصة إرساء القصائد</title>
     
-    <!-- PWA Meta -->
-    <meta name="theme-color" content="#f59e0b" />
+    <!-- PWA Primary Meta -->
+    <meta name="theme-color" content="#d97706" />
+    <meta name="description" content="منصة تفاعلية لإرساء القصائد في الساحات العامة والافتراضية." />
+    
+    <!-- iOS Support -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <link rel="manifest" href="/manifest.json" />
+    <meta name="apple-mobile-web-app-title" content="مدن الشعر" />
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/1040/1040241.png" />
+    
+    <!-- Manifest -->
+    <link rel="manifest" href="/manifest.json" />
 
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Cairo:wght@200;400;700;900&display=swap" rel="stylesheet">
@@ -22,6 +28,7 @@
         color: #f5f5f4;
         margin: 0;
         overflow-x: hidden;
+        -webkit-tap-highlight-color: transparent;
       }
       .font-amiri {
         font-family: 'Amiri', serif;
@@ -36,9 +43,28 @@
         background: #44403c;
         border-radius: 10px;
       }
-      /* تحسين استجابة الساحة الافتراضية */
-      .virtual-square-container {
-        cursor: crosshair;
+      /* PWA Display Optimizations */
+      @media all and (display-mode: standalone) {
+        body {
+          padding-top: env(safe-area-inset-top);
+        }
+      }
+
+      /* Custom Poetic Animations */
+      @keyframes poetic-pulse {
+        0%, 100% { transform: scale(1); filter: brightness(1) drop-shadow(0 0 10px rgba(59, 130, 246, 0.4)); }
+        50% { transform: scale(1.05); filter: brightness(1.2) drop-shadow(0 0 25px rgba(59, 130, 246, 0.8)); }
+      }
+      .animate-poetic-pulse {
+        animation: poetic-pulse 4s ease-in-out infinite;
+      }
+
+      @keyframes star-breathing {
+        0%, 100% { opacity: 0.6; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.4); }
+      }
+      .animate-star-breathing {
+        animation: star-breathing 3s ease-in-out infinite;
       }
     </style>
   <script type="importmap">
@@ -49,7 +75,10 @@
     "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
     "react/": "https://esm.sh/react@^19.2.4/",
     "react": "https://esm.sh/react@^19.2.4",
-    "lucide-react": "https://esm.sh/lucide-react@0.460.0"
+    "lucide-react": "https://esm.sh/lucide-react@0.460.0",
+    "babylonjs": "https://esm.sh/babylonjs@6.0.0",
+    "babylonjs-loaders": "https://esm.sh/babylonjs-loaders@6.0.0",
+    "babylonjs-gui": "https://esm.sh/babylonjs-gui@^8.51.2"
   }
 }
 </script>

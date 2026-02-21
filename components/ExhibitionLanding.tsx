@@ -4,12 +4,15 @@ import {
   ArrowLeft, Square, Circle, MoveHorizontal, Shuffle, Save, Edit,
   Layers, Move, Sparkles, Eye, Settings2, RotateCcw, LayoutGrid,
   ChevronDown, MousePointer2, Globe, Compass, Plus, Trash2, Copy, Rocket, Link, ExternalLink, Share2, Map as MapIcon,
-  Wand2, CheckCircle2, Download, MousePointerSquareDashed, List, AlignLeft, Star, Monitor
+  Wand2, CheckCircle2, Download, MousePointerSquareDashed, List, AlignLeft, Star, Monitor, X, Palette, QrCode, Navigation, Settings, Camera, Check,
+  Type, Layout, SaveAll, Maximize, MousePointer, Box, Info, Zap, Sparkle
 } from 'lucide-react';
 import { db, Exhibition, generateExhibitionId, slugify } from '../services/supabase';
 import { MediaOverlay } from './MediaOverlay';
 import { ExhibitionMap } from './ExhibitionMap';
 import { Narrative } from '../types';
+import { getLiteraryInsights, generateExhibitionContent } from '../services/geminiService';
+import PoetryBabylonStage from './PoetryBabylonStage';
 
 type LayoutType = 'sphere' | 'cylinder' | 'ring' | 'random' | 'manual' | 'square' | 'linear';
 type UserRole = 'visitor' | 'editor' | 'coordinator';
@@ -17,7 +20,7 @@ type UserRole = 'visitor' | 'editor' | 'coordinator';
 export const ExhibitionLanding: React.FC<{ 
   exhibitionId: string; 
   role?: UserRole; 
-  onClose: () => void 
+  onClose: (name: string, role: UserRole) => void 
 }> = ({
   exhibitionId,
   role = 'visitor',
@@ -28,42 +31,53 @@ export const ExhibitionLanding: React.FC<{
   const [saving, setSaving] = useState(false);
   const [hasEntered, setHasEntered] = useState(false);
   const [showMap, setShowMap] = useState(false);
-  const [showLayoutMenu, setShowLayoutMenu] = useState(false);
+  const [showToolsPanel, setShowToolsPanel] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [showContextModal, setShowContextModal] = useState(false);
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isIncepting, setIsIncepting] = useState(false);
   const [viewMode, setViewMode] = useState<'cards' | 'stars'>(role === 'visitor' ? 'stars' : 'cards');
+  const [isPhotoMode, setIsPhotoMode] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [locationInsights, setLocationInsights] = useState<{text: string, sources: any[]} | null>(null);
+  const [loadingInsights, setLoadingInsights] = useState(false);
   
-  // Navigation & Immersive State
   const [rotation, setRotation] = useState(0);
   const [isRotating, setIsRotating] = useState(true);
   const [scrollDepth, setScrollDepth] = useState(0); 
   const [mouseTilt, setMouseTilt] = useState({ x: 0, y: 0 });
   
-  // Constants for scroll range
-  const MIN_DEPTH = -10000;
-  const MAX_DEPTH = 2000;
+  const MIN_DEPTH = -100;
+  const MAX_DEPTH = 100;
   
-  // Operational State
   const [draggingNodeId, setDraggingNodeId] = useState<number | null>(null);
   const [activeNarrative, setActiveNarrative] = useState<Narrative | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [isPopUpActive, setIsPopUpActive] = useState(false);
   
   const containerRef = useRef<HTMLDivElement>(null);
-
   const isEditorMode = role === 'editor' || role === 'coordinator';
 
-  useEffect(() => { loadData(); }, [exhibitionId]);
+  useEffect(() => { 
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('ex') || params.has('id')) {
+      setHasEntered(true);
+    }
+    loadData(); 
+  }, [exhibitionId]);
 
   useEffect(() => {
-    if (!isRotating || isPopUpActive || role !== 'visitor' || showMap) return;
+    if (!isRotating || isPopUpActive || role !== 'visitor' || showMap || showContextModal || showPublishModal || isPhotoMode || showAIModal) return;
     const interval = setInterval(() => {
       setRotation(prev => (prev + 0.06) % 360);
     }, 20);
     return () => clearInterval(interval);
-  }, [isRotating, isPopUpActive, role, showMap]);
+  }, [isRotating, isPopUpActive, role, showMap, showContextModal, showPublishModal, isPhotoMode, showAIModal]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
-      if (isPopUpActive || showMap) return;
+      if (isPopUpActive || showMap || showContextModal || showPublishModal || isPhotoMode || showAIModal) return;
       setMouseTilt({
         x: (e.clientX / window.innerWidth - 0.5) * 20,
         y: (e.clientY / window.innerHeight - 0.5) * -20
@@ -71,13 +85,11 @@ export const ExhibitionLanding: React.FC<{
     };
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, [isPopUpActive, showMap]);
+  }, [isPopUpActive, showMap, showContextModal, showPublishModal, isPhotoMode, showAIModal]);
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
-      if (isPopUpActive || showMap) return;
-      
-      // Depth control: Only for roles allowed to edit layout
+      if (isPopUpActive || showMap || showContextModal || showPublishModal || isPhotoMode || showAIModal) return;
       if (draggingNodeId !== null && isEditorMode) {
         e.preventDefault();
         const delta = -e.deltaY * 0.5; 
@@ -92,14 +104,14 @@ export const ExhibitionLanding: React.FC<{
         });
       } else {
         setScrollDepth(prev => {
-          const newDepth = prev - e.deltaY * 1.5;
+          const newDepth = prev + e.deltaY * 0.05;
           return Math.min(MAX_DEPTH, Math.max(MIN_DEPTH, newDepth)); 
         });
       }
     };
     window.addEventListener('wheel', handleWheel, { passive: false });
     return () => window.removeEventListener('wheel', handleWheel);
-  }, [draggingNodeId, isEditorMode, isPopUpActive, showMap]);
+  }, [draggingNodeId, isEditorMode, isPopUpActive, showMap, showContextModal, showPublishModal, isPhotoMode, showAIModal]);
 
   async function loadData() {
     setLoading(true);
@@ -107,58 +119,180 @@ export const ExhibitionLanding: React.FC<{
     if (data) {
       const itemsWithZ = data.items.map((item: any, i: number) => ({
         ...item,
-        z: item.z !== undefined ? item.z : (Math.sin(i) * 600)
+        type: item.type || 'poem',
+        z: item.z !== undefined ? item.z : (Math.sin(i) * 600),
+        opacity: item.opacity !== undefined ? item.opacity : 1,
+        style: item.style || 'urban'
       }));
       setExhibition({ ...data, items: itemsWithZ });
     }
     setLoading(false);
   }
 
-  const handleSave = async () => {
-    if (!exhibition) return;
-    setSaving(true);
-    await db.saveExhibition(exhibition);
-    setSaving(false);
-    alert('تم حفظ هندسة الساحة والمحتوى سحابياً.');
+  const handleInception = async () => {
+    if (!exhibition || !aiPrompt) return;
+    setIsIncepting(true);
+    try {
+      const result = await generateExhibitionContent(exhibition.context.location, aiPrompt);
+      if (result.items) {
+        const newItems: Narrative[] = result.items.map((item: any, i: number) => {
+          const angle = (i / result.items.length) * Math.PI * 2;
+          const radius = 30;
+          return {
+            id: Date.now() + i,
+            title: item.title,
+            poet: item.poet,
+            content: item.content,
+            type: item.type || 'poem',
+            style: item.style || 'urban',
+            x: 50 + radius * Math.cos(angle),
+            y: 50 + radius * Math.sin(angle),
+            z: i * 200,
+            opacity: item.type === 'mural' ? 0.8 : 1,
+            image: item.type === 'mural' 
+              ? `https://images.unsplash.com/photo-1541963463532-d68292c34b19?auto=format&fit=crop&q=80&w=1000&seed=${i}`
+              : `https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&q=80&w=1000&seed=${i}`,
+            audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+          };
+        });
+        
+        const updatedEx = { ...exhibition, items: [...newItems, ...exhibition.items] };
+        setExhibition(updatedEx);
+        await handleSave(updatedEx);
+        setShowAIModal(false);
+        setAiPrompt('');
+      }
+    } catch (e) {
+      console.error(e);
+      alert("عذراً، تعذر استنطاق المكان حالياً.");
+    } finally {
+      setIsIncepting(false);
+    }
   };
 
-  const handleExport = () => {
+  const fetchInsights = async () => {
+    if (locationInsights || !exhibition) return;
+    setLoadingInsights(true);
+    try {
+      const insights = await getLiteraryInsights(exhibition.context.location, exhibition.context.lat, exhibition.context.lng);
+      setLocationInsights(insights);
+    } catch (e) {
+      console.error("Failed to fetch insights", e);
+    } finally {
+      setLoadingInsights(false);
+    }
+  };
+
+  const toggleMap = () => {
+    const nextState = !showMap;
+    setShowMap(nextState);
+    if (nextState) fetchInsights();
+  };
+
+  const handleSave = async (customExhibition?: Exhibition) => {
+    const target = customExhibition || exhibition;
+    if (!target) return;
+    setSaving(true);
+    await db.saveExhibition(target);
+    setSaving(false);
+  };
+
+  const handleExportJSON = () => {
     if (!exhibition) return;
     const dataStr = JSON.stringify(exhibition, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${exhibition.slug || 'exhibition'}-export.json`;
+    link.download = `${exhibition.slug || slugify(exhibition.context.name)}-data.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    alert('تم تصدير ملف المعرض بنجاح.');
   };
 
-  const addNewNarrative = () => {
+  const handlePublish = async () => {
+    if (!exhibition || role !== 'coordinator') return;
+    const updated = { ...exhibition, status: 'published' as const };
+    setExhibition(updated);
+    await handleSave(updated);
+    alert('تم نشر الساحة بنجاح!');
+  };
+
+  const reorderNarrative = async (id: number, direction: 'up' | 'down') => {
+    if (!exhibition || role !== 'coordinator') return;
+    const items = [...exhibition.items];
+    const index = items.findIndex(i => i.id === id);
+    if (index === -1) return;
+
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= items.length) return;
+
+    const itemA = { ...items[index] };
+    const itemB = { ...items[newIndex] };
+    
+    const tempX = itemA.x;
+    const tempY = itemA.y;
+    const tempZ = itemA.z;
+    
+    itemA.x = itemB.x;
+    itemA.y = itemB.y;
+    itemA.z = itemB.z;
+    
+    itemB.x = tempX;
+    itemB.y = tempY;
+    itemB.z = tempZ;
+
+    items[index] = itemB;
+    items[newIndex] = itemA;
+
+    const updatedEx = { ...exhibition, items };
+    setExhibition(updatedEx);
+    if (activeNarrative?.id === id) {
+      setActiveNarrative(items[newIndex]);
+    }
+    await db.saveExhibition(updatedEx);
+  };
+
+  const handleUpdateContext = async (newContext: any) => {
+    if (!exhibition) return;
+    const updated = { ...exhibition, context: { ...exhibition.context, ...newContext } };
+    setExhibition(updated);
+    await handleSave(updated);
+    setShowContextModal(false);
+  };
+
+  const addNewItem = (type: 'poem' | 'mural') => {
     if (!exhibition || !isEditorMode) return;
     const newItem: Narrative = {
       id: Date.now(),
-      title: "قصيدة جديدة",
-      poet: "منسق المدن",
-      image: "https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&q=80&w=1000",
+      title: type === 'poem' ? "قصيدة جديدة" : "رسم جداري",
+      poet: role === 'coordinator' ? "المنسق" : "الفنان",
+      image: type === 'poem' 
+        ? "https://images.unsplash.com/photo-1455390582262-044cdead277a?auto=format&fit=crop&q=80&w=1000"
+        : "https://images.unsplash.com/photo-1541963463532-d68292c34b19?auto=format&fit=crop&q=80&w=1000",
       audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-      content: "بانتظار وحي الشاعر...",
+      content: type === 'poem' ? "بانتظار وحي الشاعر..." : "صوت الشارع هنا...",
       x: 50,
       y: 50,
-      z: 0
+      z: 0,
+      opacity: type === 'mural' ? 0.7 : 1,
+      type: type,
+      style: type === 'mural' ? 'urban' : undefined
     };
-    setExhibition({ ...exhibition, items: [newItem, ...exhibition.items] });
+    const updatedEx = { ...exhibition, items: [newItem, ...exhibition.items] };
+    setExhibition(updatedEx);
+    handleSave(updatedEx);
   };
 
   const deleteNarrative = (id: number) => {
     if (!exhibition || role === 'visitor') return;
-    setExhibition({
+    const updatedEx = {
       ...exhibition,
       items: exhibition.items.filter(i => i.id !== id)
-    });
+    };
+    setExhibition(updatedEx);
+    handleSave(updatedEx);
   };
 
   const applyGeometry = (type: LayoutType) => {
@@ -166,21 +300,12 @@ export const ExhibitionLanding: React.FC<{
     const items = [...exhibition.items];
     const total = items.length;
     items.forEach((item, i) => {
-      const angle = (i / total) * 2 * Math.PI;
       if (type === 'sphere') {
         const phi = Math.acos(-1 + (2 * i) / total);
         const theta = Math.sqrt(total * Math.PI) * phi;
         item.x = 50 + 40 * Math.sin(phi) * Math.cos(theta);
         item.y = 50 + 40 * Math.sin(phi) * Math.sin(theta);
         item.z = 40 * Math.cos(phi) * 15;
-      } else if (type === 'cylinder') {
-        item.x = 50 + 45 * Math.cos(angle);
-        item.y = 10 + (i / total) * 80;
-        item.z = 45 * Math.sin(angle) * 15;
-      } else if (type === 'ring') {
-        item.x = 50 + 42 * Math.cos(angle);
-        item.y = 50;
-        item.z = 42 * Math.sin(angle) * 15;
       } else if (type === 'square') {
         const side = Math.ceil(Math.sqrt(total));
         const spacing = 70 / (side > 1 ? side - 1 : 1);
@@ -197,11 +322,13 @@ export const ExhibitionLanding: React.FC<{
         item.z = (Math.random() - 0.5) * 4000;
       }
     });
-    setExhibition({ ...exhibition, items });
-    setShowLayoutMenu(false);
+    const updatedEx = { ...exhibition, items };
+    setExhibition(updatedEx);
+    handleSave(updatedEx);
   };
 
   const openNarrative = (item: Narrative) => {
+    if (isPhotoMode || showAIModal) return;
     setActiveNarrative(item);
     setIsPopUpActive(true);
     setIsRotating(false);
@@ -218,8 +345,20 @@ export const ExhibitionLanding: React.FC<{
     if (audioElement) { audioElement.pause(); setAudioElement(null); }
   };
 
-  // Calculate scroll progress percentage
-  const scrollProgress = ((scrollDepth - MAX_DEPTH) / (MIN_DEPTH - MAX_DEPTH)) * 100;
+  const handleManualClose = () => {
+    if (exhibition) {
+      onClose(exhibition.context.name, role);
+    }
+  };
+
+  const publicUrl = exhibition ? `${window.location.origin}${window.location.pathname}?ex=${exhibition.slug || exhibition.id}` : '';
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(publicUrl)}&bgcolor=1c1917&color=ffffff`;
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(publicUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   if (loading) return (
     <div className="h-screen flex items-center justify-center bg-stone-950">
@@ -251,275 +390,343 @@ export const ExhibitionLanding: React.FC<{
   return (
     <div className="h-screen bg-stone-950 text-stone-100 font-amiri overflow-hidden flex flex-col select-none touch-none" dir="rtl">
       
-      {/* Scroll Progress Indicator (Left Edge) */}
-      <div className="fixed left-6 top-1/2 -translate-y-1/2 z-[120] flex flex-col items-center gap-4 group">
-        <span className="text-[10px] font-black text-stone-600 uppercase vertical-text tracking-widest opacity-0 group-hover:opacity-100 transition-opacity">عمق القصيد</span>
-        <div className="w-1 h-64 bg-white/5 rounded-full overflow-hidden relative border border-white/5">
-          <div 
-            className="absolute top-0 w-full bg-blue-600/40 transition-all duration-300"
-            style={{ height: `${scrollProgress}%` }}
-          />
-          <div 
-            className="absolute w-3 h-3 bg-blue-500 rounded-full left-1/2 -translate-x-1/2 shadow-[0_0_15px_rgba(59,130,246,0.5)] transition-all duration-300"
-            style={{ top: `${scrollProgress}%`, transform: `translate(-50%, -50%)` }}
-          />
-        </div>
-        <span className="text-[10px] font-black text-blue-500/50">{Math.round(scrollProgress)}%</span>
-      </div>
-
-      {/* HUD (Heads-Up Display) */}
-      <div className="fixed top-10 right-10 z-[120] pointer-events-none flex flex-col gap-6 items-end w-full max-w-sm">
-        
-        {/* Nav & Role Plate */}
-        <div className="pointer-events-auto flex items-center gap-6 bg-stone-900/90 backdrop-blur-3xl p-4 rounded-[2.5rem] border border-white/10 shadow-3xl w-full">
-          <button onClick={onClose} className="p-4 bg-stone-800 hover:bg-red-600 rounded-2xl text-white transition-all shadow-xl active:scale-90"><ArrowLeft size={20}/></button>
-          
-          <button 
-            onClick={() => setShowMap(!showMap)} 
-            className={`p-4 rounded-2xl transition-all shadow-xl active:scale-90 flex items-center justify-center ${showMap ? 'bg-blue-600 text-white' : 'bg-stone-800 text-stone-400 hover:text-blue-500'}`}
-            title="موقع الساحة"
-          >
-            <MapIcon size={20}/>
-          </button>
-
-          <div className="h-10 w-px bg-white/10"></div>
-          <div className="flex-1">
-             <h4 className="text-[10px] font-black text-stone-500 uppercase tracking-widest leading-none mb-1">
-               {role === 'coordinator' ? 'غرفة المنسق' : role === 'editor' ? 'استوديو المحرر' : 'ساحة الزائر'}
-             </h4>
-             <span className="text-md font-bold block leading-none">
-               {role === 'coordinator' ? 'هندسة الفضاء' : role === 'editor' ? 'صياغة الذاكرة' : exhibition?.context.name}
-             </span>
-          </div>
-          {role !== 'visitor' && (
+      {!isPhotoMode && (
+        <div className="fixed top-8 left-8 right-8 z-[120] pointer-events-none flex items-center justify-between">
+          <div className="pointer-events-auto flex items-center gap-4 bg-stone-900/80 backdrop-blur-3xl p-3 rounded-full border border-white/10 shadow-3xl">
+            <button onClick={handleManualClose} className="p-4 bg-stone-800 hover:bg-red-600 rounded-full text-white transition-all active:scale-90" title="العودة"><ArrowLeft size={18}/></button>
+            <div className="h-8 w-px bg-white/10"></div>
+            <div className="px-4">
+               <h4 className="text-[9px] font-black text-blue-500 uppercase tracking-widest leading-none mb-1">
+                 {role === 'coordinator' ? 'المنسق' : role === 'editor' ? 'المحرر' : 'الزائر'}
+               </h4>
+               <span className="text-sm font-bold block leading-none text-stone-200">
+                 {exhibition?.context.name}
+               </span>
+            </div>
+            <div className="h-8 w-px bg-white/10"></div>
             <button 
-              onClick={handleSave} 
-              disabled={saving}
-              className="p-4 bg-emerald-600 hover:bg-emerald-500 rounded-2xl text-white shadow-xl active:scale-90 transition-all"
-              title="حفظ التغييرات"
+              onClick={toggleMap} 
+              className={`p-4 rounded-full transition-all flex items-center justify-center ${showMap ? 'bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]' : 'bg-stone-800 text-stone-400 hover:text-blue-500'}`}
+              title="موقع الساحة"
             >
-              {saving ? <RotateCcw className="animate-spin" size={20}/> : <Save size={20}/>}
+              <MapIcon size={18}/>
             </button>
+            
+            {role === 'visitor' && (
+              <button 
+                onClick={() => setViewMode(viewMode === 'stars' ? 'cards' : 'stars')} 
+                className={`p-4 rounded-full transition-all flex items-center justify-center ${viewMode === 'cards' ? 'bg-amber-600 text-white shadow-[0_0_20px_rgba(217,119,6,0.4)]' : 'bg-stone-800 text-stone-400 hover:text-amber-500'}`}
+                title={viewMode === 'stars' ? 'عرض اللوحات' : 'عرض النجوم'}
+              >
+                {viewMode === 'stars' ? <LayoutGrid size={18}/> : <Star size={18}/>}
+              </button>
+            )}
+
+            <button 
+              onClick={() => setShowPublishModal(true)} 
+              className="p-4 bg-stone-800 hover:bg-blue-600 rounded-full text-stone-400 hover:text-white transition-all flex items-center justify-center"
+              title="مشاركة الساحة"
+            >
+              <Share2 size={18}/>
+            </button>
+            {role === 'visitor' && (
+              <button 
+                onClick={() => setIsPhotoMode(true)} 
+                className="p-4 bg-stone-800 hover:bg-white hover:text-black rounded-full text-stone-400 transition-all flex items-center gap-2 group"
+                title="وضع التصوير"
+              >
+                <Camera size={18} className="group-hover:scale-110 transition-transform" />
+                <span className="text-[10px] font-black uppercase tracking-widest hidden md:inline">وضع السيلفي</span>
+              </button>
+            )}
+          </div>
+
+          {isEditorMode && (
+            <div className="pointer-events-auto flex items-center gap-3">
+               <button 
+                  onClick={() => setShowToolsPanel(!showToolsPanel)}
+                  className={`w-16 h-16 rounded-full flex items-center justify-center transition-all shadow-3xl border-2 active:scale-90 ${showToolsPanel ? 'bg-amber-600 border-amber-400 text-white' : 'bg-stone-900 border-white/10 text-stone-400 hover:text-white hover:border-blue-500/50'}`}
+               >
+                  {showToolsPanel ? <X size={24}/> : <Wand2 size={24}/>}
+               </button>
+            </div>
           )}
         </div>
+      )}
 
-        {/* Coordinator Tools (Space Engineering) */}
-        {role === 'coordinator' && (
-          <div className="pointer-events-auto flex flex-col gap-4 animate-in slide-in-from-right-10 duration-700 w-full">
-            <div className="bg-stone-900/90 backdrop-blur-3xl p-6 rounded-[2.5rem] border border-white/10 shadow-3xl space-y-6">
-               <div className="flex justify-between items-center mb-2">
-                  <div className="flex items-center gap-3 text-blue-500">
-                    <List size={14}/>
-                    <span className="text-[10px] font-black uppercase tracking-widest">المسار الحالي</span>
-                  </div>
-                  <span className="text-xl font-black text-white">{exhibition?.items.length} <span className="text-[8px] text-stone-500">نقطة</span></span>
-               </div>
-
-               <div className="flex flex-col gap-3 relative">
-                  <div className="flex items-center justify-between opacity-50 px-2 pt-2">
-                    <span className="text-[9px] font-black uppercase tracking-widest">التشكيل الهندسي</span>
-                    <Compass size={14} />
-                  </div>
-                  
-                  {/* Layout Dropdown Menu */}
-                  <div className="relative">
-                    <button 
-                      onClick={() => setShowLayoutMenu(!showLayoutMenu)}
-                      className="w-full p-4 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5 transition-all flex items-center justify-between active:scale-95 group"
-                    >
-                      <div className="flex items-center gap-3">
-                        <LayoutGrid size={18} className="text-blue-500" />
-                        <span className="text-sm font-bold">اختر النمط الهندسي</span>
-                      </div>
-                      <ChevronDown size={16} className={`text-stone-500 transition-transform ${showLayoutMenu ? 'rotate-180' : ''}`} />
-                    </button>
-
-                    {showLayoutMenu && (
-                      <div className="absolute top-full right-0 left-0 mt-3 bg-stone-900 border border-white/10 rounded-3xl overflow-hidden shadow-3xl z-[150] animate-in slide-in-from-top-2 duration-300">
-                        <div className="grid grid-cols-1 divide-y divide-white/5">
-                          <button onClick={() => applyGeometry('square')} className="w-full px-6 py-4 text-right hover:bg-blue-600/10 flex items-center gap-4 transition-colors">
-                            <Square size={16} className="text-stone-500" />
-                            <span className="text-sm">تنسيق مربّع (شبكة)</span>
-                          </button>
-                          <button onClick={() => applyGeometry('ring')} className="w-full px-6 py-4 text-right hover:bg-blue-600/10 flex items-center gap-4 transition-colors">
-                            <Circle size={16} className="text-stone-500" />
-                            <span className="text-sm">تنسيق دائري (حلقة)</span>
-                          </button>
-                          <button onClick={() => applyGeometry('linear')} className="w-full px-6 py-4 text-right hover:bg-blue-600/10 flex items-center gap-4 transition-colors">
-                            <AlignLeft size={16} className="text-stone-500" />
-                            <span className="text-sm">تنسيق خطي (عمق)</span>
-                          </button>
-                          <button onClick={() => applyGeometry('sphere')} className="w-full px-6 py-4 text-right hover:bg-blue-600/10 flex items-center gap-4 transition-colors">
-                            <Globe size={16} className="text-stone-500" />
-                            <span className="text-sm">تنسيق كروي (سديم)</span>
-                          </button>
-                          <button onClick={() => applyGeometry('cylinder')} className="w-full px-6 py-4 text-right hover:bg-blue-600/10 flex items-center gap-4 transition-colors">
-                            <Layers size={16} className="text-stone-500" />
-                            <span className="text-sm">تنسيق أسطواني</span>
-                          </button>
-                          <button onClick={() => applyGeometry('random')} className="w-full px-6 py-4 text-right hover:bg-blue-600/10 flex items-center gap-4 transition-colors">
-                            <Shuffle size={16} className="text-stone-500" />
-                            <span className="text-sm">توزيع عشوائي</span>
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-               </div>
-
-               <div className="h-px bg-white/5"></div>
-               <div className="flex flex-col gap-3">
-                 <button 
-                   onClick={() => setViewMode(viewMode === 'cards' ? 'stars' : 'cards')}
-                   className={`w-full py-5 rounded-2xl font-black text-sm flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl ${viewMode === 'stars' ? 'bg-amber-600 text-white' : 'bg-white/5 text-stone-300 border border-white/5 hover:bg-white/10'}`}
-                 >
-                   {viewMode === 'stars' ? <Monitor size={18}/> : <Eye size={18}/>}
-                   <span>{viewMode === 'stars' ? 'العودة للمحرر' : 'معاينة الزائر'}</span>
-                 </button>
-                 <button 
-                   onClick={addNewNarrative}
-                   className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-sm flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl shadow-blue-900/20"
-                 >
-                   <Plus size={18}/>
-                   <span>إضافة قصيدة للمسار</span>
-                 </button>
-                 <button 
-                   onClick={handleExport}
-                   className="w-full py-4 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-2xl font-bold text-xs flex items-center justify-center gap-3 transition-all active:scale-95 border border-white/5 shadow-lg"
-                 >
-                   <Download size={16}/>
-                   <span>تصدير الديوان (JSON)</span>
-                 </button>
-               </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Main 3D Stage */}
-      <main 
-        ref={containerRef}
-        className="flex-1 relative perspective-[2000px] overflow-hidden bg-black"
-        style={{ perspectiveOrigin: `${50 + mouseTilt.x * 0.4}% ${50 + mouseTilt.y * -0.4}%` }}
-      >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#020617_0%,#000000_100%)] opacity-90"></div>
-        
-        {/* Stellar Background Overlay */}
-        <div className="absolute inset-0 pointer-events-none opacity-30">
-           <div className="absolute top-1/4 left-1/3 w-2 h-2 bg-white rounded-full blur-[1px] animate-pulse"></div>
-           <div className="absolute top-2/3 right-1/4 w-1 h-1 bg-blue-400 rounded-full blur-[1px] animate-pulse delay-500"></div>
-           <div className="absolute bottom-1/4 left-2/3 w-1 h-1 bg-white rounded-full blur-[1px] animate-pulse delay-1000"></div>
-        </div>
-
+      {isEditorMode && (
         <div 
-          className="relative w-full h-full preserve-3d transition-all duration-[1000ms] ease-out"
-          style={{ 
-            transform: `translate3d(0, 0, ${scrollDepth}px) rotateX(${mouseTilt.y * 0.5}deg) rotateY(${rotation + mouseTilt.x * 0.5}deg)`, 
-            filter: (isPopUpActive || showMap) ? 'blur(40px) brightness(0.1)' : 'none' 
-          }}
+          className={`fixed right-8 top-32 z-[130] w-80 transition-all duration-500 ease-out transform ${showToolsPanel ? 'translate-x-0 opacity-100 scale-100' : 'translate-x-20 opacity-0 scale-90 pointer-events-none'}`}
         >
-          {exhibition?.items.map((item) => {
-            const billY = -(rotation + mouseTilt.x * 0.5);
-            const billX = -(mouseTilt.y * 0.5);
-            const isDragging = draggingNodeId === item.id;
-            const dist = (item.z || 0) + scrollDepth;
-            const opacity = Math.max(0, Math.min(1, (dist + 6000) / 6000));
-            const blur = Math.max(0, Math.min(10, Math.abs(dist) / 1000));
+          <div className="bg-stone-900/90 backdrop-blur-3xl border border-white/10 rounded-[3rem] p-8 shadow-[0_50px_100px_rgba(0,0,0,0.8)] flex flex-col gap-10">
+            
+            <div className="flex items-center justify-between border-b border-white/5 pb-6">
+               <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${role === 'coordinator' ? 'bg-amber-600/20 text-amber-500' : 'bg-blue-600/20 text-blue-500'}`}>
+                    <Box size={20} />
+                  </div>
+                  <div>
+                    <h5 className="text-[10px] font-black uppercase tracking-[0.2em] text-white">حقيبة الأدوات</h5>
+                    <p className="text-[8px] font-bold text-stone-500 uppercase tracking-widest">{role === 'coordinator' ? 'صلاحيات كاملة' : 'صلاحيات المحرر'}</p>
+                  </div>
+               </div>
+               <button onClick={() => setShowToolsPanel(false)} className="text-stone-600 hover:text-white transition-colors">
+                 <X size={16} />
+               </button>
+            </div>
 
-            return (
-              <div 
-                key={item.id}
-                onPointerDown={(e) => {
-                  if (isEditorMode && viewMode === 'cards') {
-                    const target = e.currentTarget as HTMLElement;
-                    target.setPointerCapture(e.pointerId);
-                    setDraggingNodeId(item.id);
-                    setIsRotating(false);
-                  }
-                }}
-                onPointerUp={(e) => {
-                  if (draggingNodeId === item.id) {
-                    const target = e.currentTarget as HTMLElement;
-                    target.releasePointerCapture(e.pointerId);
-                    setDraggingNodeId(null);
-                    setIsRotating(true);
-                  }
-                }}
-                onPointerMove={(e) => {
-                  if (isDragging && isEditorMode && containerRef.current) {
-                    const rect = containerRef.current.getBoundingClientRect();
-                    const x = ((e.clientX - rect.left) / rect.width) * 100;
-                    const y = ((e.clientY - rect.top) / rect.height) * 100;
-                    setExhibition(prev => prev ? ({...prev, items: prev.items.map(it => it.id === item.id ? {...it, x, y} : it)}) : null);
-                  }
-                }}
-                onClick={() => !isDragging && openNarrative(item)}
-                className={`absolute transform-gpu preserve-3d transition-all ${isEditorMode && viewMode === 'cards' ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${isDragging ? 'duration-0 scale-110 z-[500]' : 'duration-700'}`}
-                style={{ 
-                  left: `${item.x}%`, top: `${item.y}%`, 
-                  transform: `translate3d(-50%, -50%, ${item.z || 0}px) rotateY(${billY}deg) rotateX(${billX}deg)`,
-                  zIndex: Math.round(item.z || 0) + 10000,
-                  opacity: isDragging ? 1 : opacity,
-                  filter: isDragging ? 'none' : `blur(${blur}px)`,
-                  pointerEvents: opacity < 0.05 ? 'none' : 'auto'
-                }}
-              >
-                <div className="relative group flex items-center justify-center">
-                   
-                   {/* Role specific quick controls */}
-                   {role === 'editor' && !isDragging && viewMode === 'cards' && (
-                      <div className="absolute -top-12 left-1/2 -translate-x-1/2 flex gap-2 opacity-0 group-hover:opacity-100 transition-all z-[110] animate-in slide-in-from-bottom-2 duration-300">
-                         <button onClick={(e) => { e.stopPropagation(); openNarrative(item); }} className="p-3 bg-blue-600 rounded-xl text-white shadow-xl hover:scale-110 transition-transform"><Edit size={16}/></button>
-                         <button onClick={(e) => { e.stopPropagation(); if(confirm('حذف؟')) deleteNarrative(item.id); }} className="p-3 bg-red-600 rounded-xl text-white shadow-xl hover:scale-110 transition-transform"><Trash2 size={16}/></button>
-                      </div>
-                   )}
+            {role === 'coordinator' && (
+              <div className="space-y-4">
+                 <span className="text-[8px] font-black text-amber-500 uppercase tracking-[0.3em] mr-2">ذكاء المكان</span>
+                 <button 
+                    onClick={() => { setShowAIModal(true); setShowToolsPanel(false); }}
+                    className="w-full py-4 bg-amber-600/10 hover:bg-amber-600 text-amber-500 hover:text-white border border-amber-500/20 rounded-2xl flex items-center justify-center gap-3 transition-all group"
+                 >
+                    <Zap size={18} className="group-hover:animate-pulse" />
+                    <span className="text-[10px] font-black uppercase tracking-widest">استبصار سردي (AI)</span>
+                 </button>
+              </div>
+            )}
 
-                   {isEditorMode && !isDragging && viewMode === 'cards' && (
-                      <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 bg-stone-900/80 px-4 py-2 rounded-lg border border-white/5 text-[8px] font-black uppercase tracking-widest text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity">اسحب لتنسيق البيت</div>
-                   )}
+            <div className="space-y-4">
+              <span className="text-[8px] font-black text-stone-600 uppercase tracking-[0.3em] mr-2">إضافة عناصر</span>
+              <div className="grid grid-cols-2 gap-3">
+                <button 
+                  onClick={() => addNewItem('poem')}
+                  className="flex flex-col items-center gap-2 p-4 bg-white/5 hover:bg-blue-600/20 border border-white/5 hover:border-blue-500/30 rounded-2xl text-stone-400 hover:text-white transition-all group"
+                >
+                  <Type size={20} className="group-hover:scale-110 transition-transform"/>
+                  <span className="text-[9px] font-black uppercase">قصيدة</span>
+                </button>
+                <button 
+                  onClick={() => addNewItem('mural')}
+                  className="flex flex-col items-center gap-2 p-4 bg-white/5 hover:bg-purple-600/20 border border-white/5 hover:border-purple-500/30 rounded-2xl text-stone-400 hover:text-white transition-all group"
+                >
+                  <Palette size={20} className="group-hover:scale-110 transition-transform"/>
+                  <span className="text-[9px] font-black uppercase">جدارية</span>
+                </button>
+              </div>
+            </div>
 
-                   {/* Point visual for "Stars" mode / Visitor view */}
-                   {viewMode === 'stars' ? (
-                     <div className="relative flex items-center justify-center">
-                        <div className="w-4 h-4 bg-white rounded-full shadow-[0_0_20px_rgba(255,255,255,0.8)] group-hover:scale-150 transition-transform duration-500 border border-white/20"></div>
-                        <div className="absolute inset-0 w-12 h-12 bg-blue-500/20 rounded-full blur-xl group-hover:bg-blue-400/40 transition-all duration-700 animate-pulse"></div>
-                        <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-all duration-500 transform translate-y-4 group-hover:translate-y-0">
-                           <span className="text-xs font-bold text-white bg-black/40 backdrop-blur-md px-3 py-1 rounded-full border border-white/10">{item.title}</span>
-                        </div>
-                     </div>
-                   ) : (
-                     /* Visual Plate for Editor/Coordinator */
-                     <div className={`w-40 h-56 md:w-64 md:h-80 rounded-[3rem] overflow-hidden border-2 transition-all duration-700 shadow-3xl ${isDragging ? 'border-blue-500 ring-8 ring-blue-500/10' : 'border-white/5 group-hover:border-blue-500/50'}`}>
-                        <img src={item.image} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-700" alt={item.title} />
-                        <div className="absolute inset-0 bg-gradient-to-t from-stone-950/80 via-transparent to-transparent"></div>
-                        <div className="absolute bottom-10 inset-x-6 text-center">
-                           <h4 className="text-white text-[10px] font-black uppercase tracking-widest truncate">{item.title}</h4>
-                        </div>
-                     </div>
-                   )}
-
-                   {/* Coordinator Detail Overlays */}
-                   {isDragging && (
-                      <div className="absolute -bottom-16 left-1/2 -translate-x-1/2 bg-blue-600 px-5 py-3 rounded-2xl text-[10px] font-black text-white shadow-2xl flex items-center gap-3 animate-pulse">
-                         <MoveHorizontal size={14}/>
-                         <span>عمق الأثر: {Math.round(item.z || 0)}</span>
-                      </div>
-                   )}
+            {role === 'coordinator' && (
+              <div className="space-y-4">
+                <span className="text-[8px] font-black text-stone-600 uppercase tracking-[0.3em] mr-2">الهندسة الفراغية</span>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { type: 'sphere', icon: <Globe size={16}/>, label: 'كروي' },
+                    { type: 'linear', icon: <AlignLeft size={16}/>, label: 'خطي' },
+                    { type: 'square', icon: <LayoutGrid size={16}/>, label: 'مربع' },
+                    { type: 'random', icon: <Shuffle size={16}/>, label: 'عشوائي' }
+                  ].map((geo) => (
+                    <button 
+                      key={geo.type}
+                      onClick={() => applyGeometry(geo.type as LayoutType)}
+                      className="p-3 bg-white/5 hover:bg-amber-600/20 border border-white/5 hover:border-amber-500/30 rounded-xl text-stone-500 hover:text-amber-500 transition-all flex items-center justify-center"
+                      title={geo.label}
+                    >
+                      {geo.icon}
+                    </button>
+                  ))}
                 </div>
               </div>
-            );
-          })}
+            )}
+
+            <div className="space-y-4">
+              <span className="text-[8px] font-black text-stone-600 uppercase tracking-[0.3em] mr-2">نمط العرض</span>
+              <div className="flex gap-2 bg-black/40 p-2 rounded-2xl border border-white/5">
+                <button 
+                  onClick={() => setViewMode('stars')}
+                  className={`flex-1 py-3 flex items-center justify-center gap-2 rounded-xl transition-all ${viewMode === 'stars' ? 'bg-white/10 text-white shadow-lg' : 'text-stone-600 hover:text-stone-400'}`}
+                >
+                  <Star size={14} />
+                  <span className="text-[9px] font-black uppercase tracking-widest">نجوم</span>
+                </button>
+                <button 
+                  onClick={() => setViewMode('cards')}
+                  className={`flex-1 py-3 flex items-center justify-center gap-2 rounded-xl transition-all ${viewMode === 'cards' ? 'bg-white/10 text-white shadow-lg' : 'text-stone-600 hover:text-stone-400'}`}
+                >
+                  <LayoutGrid size={14} />
+                  <span className="text-[9px] font-black uppercase tracking-widest">لوحات</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 pt-4 border-t border-white/5">
+              {role === 'coordinator' && exhibition?.status !== 'published' && (
+                <button 
+                  onClick={handlePublish}
+                  className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl shadow-emerald-900/40"
+                >
+                  <Rocket size={16}/>
+                  <span>نشر الساحة للعموم</span>
+                </button>
+              )}
+              
+              <button 
+                onClick={() => handleSave()}
+                disabled={saving}
+                className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all active:scale-95 shadow-xl shadow-blue-900/40"
+              >
+                {saving ? <RotateCcw className="animate-spin" size={16}/> : <SaveAll size={16}/>}
+                <span>{saving ? 'جاري الحفظ...' : 'حفظ حالة الساحة'}</span>
+              </button>
+
+              {role === 'coordinator' && (
+                <button 
+                  onClick={handleExportJSON}
+                  className="w-full py-4 bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white rounded-2xl font-bold text-[9px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 border border-white/5"
+                >
+                  <Download size={14} />
+                  <span>تصدير البيانات (JSON)</span>
+                </button>
+              )}
+              
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setShowContextModal(true)}
+                  className="flex-1 py-4 bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white rounded-2xl font-bold text-[9px] uppercase tracking-widest transition-all"
+                >
+                  إرساء الساحة
+                </button>
+                <button 
+                  onClick={() => setScrollDepth(0)}
+                  className="px-4 bg-stone-800 hover:bg-stone-700 text-stone-400 rounded-2xl transition-all"
+                  title="تصفير العمق"
+                >
+                  <Maximize size={16} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <main 
+        ref={containerRef}
+        className={`flex-1 relative overflow-hidden bg-black ${isPhotoMode ? 'cursor-none' : ''}`}
+      >
+        <div className="absolute inset-0">
+          <PoetryBabylonStage
+            items={exhibition?.items || []}
+            role={role}
+            onSelectItem={openNarrative}
+            selectedId={activeNarrative?.id}
+            scrollDepth={scrollDepth}
+            mouseTilt={mouseTilt}
+            onUpdateItem={(id, x, y, z) => {
+              if (!exhibition) return;
+              const updated = { ...exhibition, items: exhibition.items.map(i => i.id === id ? {...i, x, y, z} : i) };
+              setExhibition(updated);
+            }}
+            isBlurred={isPopUpActive || showMap || showPublishModal || showContextModal || showAIModal}
+            viewMode={viewMode}
+          />
         </div>
       </main>
 
-      {/* Overlays */}
+      {/* AI Inception Modal */}
+      {showAIModal && exhibition && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-black/90 backdrop-blur-3xl animate-in fade-in duration-500">
+           <div className="max-w-2xl w-full bg-stone-900 border border-white/10 rounded-[4rem] p-12 space-y-10 shadow-3xl text-center relative overflow-hidden">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.05),transparent)]"></div>
+              <button onClick={() => setShowAIModal(false)} className="absolute top-8 right-8 text-stone-500 hover:text-white transition-colors z-20"><X size={24}/></button>
+              
+              <div className="space-y-6 relative z-10">
+                 <div className={`w-20 h-20 bg-amber-600/10 mx-auto rounded-3xl flex items-center justify-center border border-amber-500/20 shadow-2xl ${isIncepting ? 'animate-pulse scale-110' : ''}`}>
+                    <Zap className="text-amber-500" size={40} />
+                 </div>
+                 <h3 className="text-4xl font-black text-white tracking-tighter uppercase leading-none">استبصار سردي للمكان</h3>
+                 <p className="text-stone-500 text-sm font-bold uppercase tracking-widest max-w-sm mx-auto">صف رؤيتك لقرية {exhibition.context.location} وسيقوم Gemini بتوليد المعرض كاملاً</p>
+              </div>
+
+              <div className="relative z-10">
+                 <textarea 
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    placeholder="مثال: أريد شعارات جرافيتي عن الحرية وقصائد تحكي تاريخ الزيتون في هذه الساحة..."
+                    rows={4}
+                    className="w-full bg-black/40 border border-white/10 rounded-[2rem] p-8 text-white font-amiri text-2xl outline-none focus:border-amber-500 transition-all resize-none shadow-inner"
+                 />
+              </div>
+
+              <button 
+                onClick={handleInception}
+                disabled={isIncepting || !aiPrompt}
+                className={`w-full py-7 rounded-3xl font-black text-2xl flex items-center justify-center gap-4 transition-all active:scale-95 relative z-10 overflow-hidden ${isIncepting ? 'bg-amber-900/40 text-amber-500' : 'bg-amber-600 hover:bg-amber-500 text-white shadow-2xl shadow-amber-900/40'}`}
+              >
+                {isIncepting ? (
+                   <>
+                    <RotateCcw className="animate-spin" size={24} />
+                    <span>جاري استنطاق المكان...</span>
+                   </>
+                ) : (
+                   <>
+                    <Sparkle size={24} />
+                    <span>تفعيل المحاكاة السردية</span>
+                   </>
+                )}
+              </button>
+           </div>
+        </div>
+      )}
+
+      {/* Floating Mini-Map Toggle (Bottom-Right) */}
+      {!isPhotoMode && !isPopUpActive && (
+        <div className="fixed bottom-10 right-10 z-[120]">
+           <button 
+            onClick={toggleMap}
+            className={`flex items-center gap-4 px-6 py-4 bg-stone-900/80 backdrop-blur-2xl rounded-full border border-white/10 shadow-3xl transition-all hover:scale-105 active:scale-95 group ${showMap ? 'border-blue-500/50' : ''}`}
+           >
+              <div className={`p-2 rounded-xl transition-colors ${showMap ? 'bg-blue-600 text-white' : 'bg-stone-800 text-stone-400 group-hover:text-blue-500'}`}>
+                <Compass size={20} className={showMap ? 'animate-spin-slow' : ''} />
+              </div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-stone-300">خرائط الساحة</span>
+           </button>
+        </div>
+      )}
+
+      {/* Map Experience Modal */}
       {showMap && exhibition?.context.lat && exhibition?.context.lng && (
         <ExhibitionMap 
           lat={exhibition.context.lat} 
           lng={exhibition.context.lng} 
           name={exhibition.context.name} 
+          insights={locationInsights}
+          loadingInsights={loadingInsights}
           onClose={() => setShowMap(false)} 
         />
+      )}
+
+      {showPublishModal && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-black/90 backdrop-blur-3xl animate-in fade-in duration-500">
+           <div className="max-w-md w-full bg-stone-900 border border-white/10 rounded-[4rem] p-12 text-center space-y-10 shadow-3xl relative">
+              <button onClick={() => setShowPublishModal(false)} className="absolute top-8 right-8 text-stone-500 hover:text-white transition-colors"><X size={20}/></button>
+              
+              <div className="space-y-4">
+                 <div className="w-16 h-16 bg-blue-600/10 mx-auto rounded-3xl flex items-center justify-center border border-blue-500/20 mb-4">
+                    <QrCode className="text-blue-500" size={32} />
+                 </div>
+                 <h3 className="text-3xl font-black text-white tracking-tighter uppercase leading-none">شارك هذه الساحة</h3>
+                 <p className="text-stone-500 text-sm font-bold uppercase tracking-widest">امسح الرمز أو انسخ الرابط لدعوة الآخرين</p>
+              </div>
+
+              <div className="p-8 bg-stone-950 rounded-[3rem] border border-white/5 flex flex-col items-center gap-6">
+                 <img src={qrUrl} alt="QR Code" className="w-full aspect-square rounded-2xl shadow-2xl border border-white/10" />
+                 <div className="w-full flex items-center gap-3 bg-black/40 border border-white/5 p-4 rounded-2xl">
+                    <Link size={14} className="text-stone-700 shrink-0" />
+                    <span className="text-[10px] font-mono text-stone-400 truncate text-left dir-ltr flex-1">{publicUrl}</span>
+                 </div>
+              </div>
+
+              <button 
+                onClick={copyLink} 
+                className={`w-full py-6 rounded-3xl font-black text-xl flex items-center justify-center gap-4 transition-all active:scale-95 ${copied ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
+              >
+                {copied ? <Check size={24}/> : <Copy size={24}/>}
+                <span>{copied ? 'تم النسخ' : 'نسخ رابط الساحة'}</span>
+              </button>
+           </div>
+        </div>
       )}
 
       {isPopUpActive && activeNarrative && (
@@ -527,21 +734,36 @@ export const ExhibitionLanding: React.FC<{
           item={activeNarrative} 
           onClose={closeNarrative} 
           role={role}
-          onUpdate={(updated) => {
+          totalItems={exhibition?.items.length || 0}
+          currentIndex={exhibition?.items.findIndex(i => i.id === activeNarrative.id) || 0}
+          onReorder={role === 'coordinator' ? reorderNarrative : undefined}
+          onUpdate={async (updated) => {
              const newItems = exhibition!.items.map(i => i.id === updated.id ? updated : i);
-             setExhibition({ ...exhibition!, items: newItems });
+             const updatedExhibition = { ...exhibition!, items: newItems };
+             setExhibition(updatedExhibition);
+             if (isEditorMode) await db.saveExhibition(updatedExhibition);
           }}
-          onDelete={role === 'editor' ? deleteNarrative : undefined}
+          onDelete={isEditorMode ? deleteNarrative : undefined}
         />
       )}
 
-      <style>{`
-        .preserve-3d { transform-style: preserve-3d; }
-        .vertical-text {
-          writing-mode: vertical-rl;
-          text-orientation: mixed;
-        }
-      `}</style>
+      {showContextModal && exhibition && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/90 backdrop-blur-2xl animate-in fade-in duration-500">
+          <div className="max-w-2xl w-full bg-stone-900 border border-white/10 rounded-[4rem] p-12 space-y-10 shadow-3xl">
+             <div className="flex items-center gap-6 border-b border-white/5 pb-8">
+                <div className="p-5 bg-amber-600 rounded-3xl text-white shadow-xl">
+                   <Settings2 size={32}/>
+                </div>
+                <div>
+                   <h3 className="text-4xl font-black text-white tracking-tighter uppercase leading-none mb-1">إرساء الساحة</h3>
+                </div>
+             </div>
+             <div className="pt-6 border-t border-white/5 flex gap-4">
+                <button onClick={() => setShowContextModal(false)} className="flex-1 py-6 bg-emerald-600 text-white rounded-3xl font-black text-xl">حفظ وإغلاق</button>
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

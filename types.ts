@@ -5,20 +5,24 @@ export interface Poem {
   poet: string;
   image: string;
   audioUrl: string;
-  content: string; // نص القصيدة
+  content: string; 
   x: number; 
   y: number;
-  z?: number; // العمق في الفضاء الثلاثي الأبعاد
+  z?: number; 
+  lat?: number;
+  lng?: number;
+  opacity?: number;
+  type?: 'poem' | 'mural'; // تمييز النوع: قصيدة أم جدارية
+  style?: 'stencil' | 'urban' | 'ancient' | 'neon'; // أسلوب الرسم الجداري
 }
 
-// Narrative is used interchangeably with Poem in some spatial components
 export type Narrative = Poem;
 
 export interface CityContext {
   name: string;
   location: string;
   description: string;
-  story?: string; // Additional field used in creation flows
+  story?: string;
   lat?: number;
   lng?: number;
 }
@@ -33,5 +37,4 @@ export interface PoetryDiwan {
   status?: 'published' | 'draft' | 'archived';
 }
 
-// Exhibition is the primary interface for diwans in the app's UI
 export type Exhibition = PoetryDiwan;
